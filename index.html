@@ -1,0 +1,138 @@
+<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Recepción</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#14120e;--pn:#201d16;--ln:#3a3528;--tx:#e8e2d0;--mu:#8f8872;--am:#f0b429;--ok:#5fb85f;--er:#e05a4a}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px 'JetBrains Mono',monospace}
+header{display:flex;gap:8px;padding:10px;background:var(--pn);border-bottom:2px solid var(--am);align-items:center;flex-wrap:wrap}
+button,.bt{background:var(--am);color:#000;border:0;padding:9px 14px;font:inherit;font-weight:700;cursor:pointer;border-radius:3px}
+button.g{background:transparent;color:var(--tx);border:1px solid var(--ln)}button.on{background:var(--am);color:#000}
+nav{display:flex;gap:6px;padding:10px;flex-wrap:wrap}nav button{background:transparent;color:var(--mu);border:1px solid var(--ln)}nav button.on{background:var(--am);color:#000}
+main{padding:10px;max-width:1000px;margin:auto}section{display:none}section.on{display:block}
+input,select,textarea{background:var(--bg);color:var(--tx);border:1px solid var(--ln);padding:9px;font:inherit;width:100%;margin:4px 0;border-radius:3px}
+.card{background:var(--pn);border:1px solid var(--ln);padding:10px;margin:6px 0;border-radius:3px;cursor:pointer}.card:hover{border-color:var(--am)}
+.mu{color:var(--mu);font-size:12px}.ok{color:var(--ok)}.er{color:var(--er)}.am{color:var(--am)}
+.row{display:flex;gap:8px;flex-wrap:wrap}.row>*{flex:1;min-width:140px}
+table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px solid var(--ln);text-align:left;font-size:13px}
+dialog{background:var(--pn);color:var(--tx);border:2px solid var(--am);border-radius:4px;width:min(520px,94vw)}dialog::backdrop{background:#000a}
+.b{display:flex;gap:8px;justify-content:flex-end;margin-top:10px}.ls{max-height:200px;overflow:auto}
+#st{margin-left:auto;font-size:12px}
+</style></head><body>
+<header><button id="m_ts" class="on" onclick="mod('ts')">Recepción de TS</button><button id="m_cp" class="g" onclick="mod('cp')">Recepción de Compras</button><span id="st"></span></header>
+
+<div id="ts">
+<nav><button class="on" onclick="tab(0)">Preparación</button><button onclick="tab(1)">Revisión</button><button onclick="tab(2)">Reporte diario</button></nav>
+<main>
+<section id="t0" class="on"><h3>Registrar preparación</h3>
+<div class="row"><input id="p_doc" placeholder="N° documento"><input id="p_dest" placeholder="Bodega destino"><input id="p_quien" placeholder="Quién prepara"></div>
+<button onclick="addPrep()">Guardar</button><h3>Registros</h3><div id="preps"></div></section>
+
+<section id="t1"><div id="pend"></div>
+<div id="v_list"><label class="bt" style="display:inline-block">📂 Cargar XML<input type="file" accept=".xml,.XML" hidden onchange="loadXML(this)"></label>
+<input id="q" placeholder="Buscar: documento, destino, usuario, fecha o código de artículo" oninput="drawDocs()"><div id="docs"></div></div>
+<div id="v_rev" style="display:none"></div></section>
+
+<section id="t2"><div class="row"><input type="date" id="rd" onchange="drawRep()"><button onclick="xls()">⬇ Excel</button></div><div id="rep"></div></section>
+</main></div>
+
+<div id="cp" style="display:none"><main><h3 class="am">Recepción de Compras</h3><p class="mu">Pendiente: falta el archivo de órdenes de compra para definir los campos. Usará el mismo backend con pestañas propias (Docs_Compras / Revs_Compras).</p></main></div>
+<dialog id="dg"></dialog>
+
+<script>
+const API='https://script.google.com/macros/s/AKfycbwBrJ8q-CV4CoAkMHttkFHDxYj2XMPaLY9AqDg_pbs05rMwBufqIKvcgV9UzOkFLMWXnw/exec';
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const ld=(d=new Date())=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+const show=h=>{dg.innerHTML=h;if(!dg.open)dg.showModal()};
+let S={docs:{},revs:{},preps:{}},cur=null,sc=[];
+try{S=JSON.parse(localStorage.S)}catch(e){}
+const sv=()=>{try{localStorage.S=JSON.stringify(S)}catch(e){}};
+
+function mod(m){['ts','cp'].forEach(x=>{$(x).style.display=x==m?'':'none';$('m_'+x).className=x==m?'on':'g'})}
+function tab(n){document.querySelectorAll('#ts nav button').forEach((b,i)=>b.className=i==n?'on':'');document.querySelectorAll('#ts section').forEach((s,i)=>s.className=i==n?'on':'');if(n==2)drawRep();if(n==1)drawPend()}
+
+/* ---- Cola de guardado en segundo plano ---- */
+let Q=[];try{Q=JSON.parse(localStorage.Q||'[]')}catch(e){}
+let busy=false,wait=0,err='';
+function enq(a,d){Q.push({a,d});try{localStorage.Q=JSON.stringify(Q)}catch(e){}pump()}
+function st(){$('st').innerHTML=!Q.length?'<span class="ok">✔ Guardado</span>':err?`<span class="er">⚠ Sin guardar: ${esc(err)}</span> <button class="g" onclick="wait=0;pump()">Reintentar ahora</button>`:'<span class="am">⏳ Guardando…</span>'}
+async function pump(){
+ if(busy||!Q.length){st();return}busy=true;st();
+ const j=Q[0],ac=new AbortController(),t=setTimeout(()=>ac.abort(),12000);
+ try{const r=await fetch(API,{method:'POST',body:JSON.stringify({a:j.a,...j.d}),signal:ac.signal});const x=await r.json();clearTimeout(t);
+  if(!x.ok)throw new Error(x.e||'error del servidor');
+  Q.shift();try{localStorage.Q=JSON.stringify(Q)}catch(e){}wait=0;err='';busy=false;pump()}
+ catch(e){clearTimeout(t);err=e.name=='AbortError'?'tiempo agotado':e.message;wait=Math.min(wait+1500,6000);busy=false;st();setTimeout(pump,wait)}
+}
+async function load(){draw();try{const r=await fetch(API);const x=await r.json();if(x.docs){S=x;sv()}}catch(e){}draw()}
+function draw(){drawPreps();drawDocs();drawPend();drawRep()}
+
+/* ---- Preparación ---- */
+function addPrep(){const doc=$('p_doc').value.trim(),dest=$('p_dest').value.trim(),quien=$('p_quien').value.trim();if(!doc||!quien)return alert('Documento y quién prepara son obligatorios');
+ const p={id:'P'+Date.now(),doc,dest,quien,fecha:new Date().toLocaleString('es-EC'),subida:false};S.preps[p.id]=p;sv();enq('savePrep',{prep:p});
+ ['p_doc','p_dest','p_quien'].forEach(i=>$(i).value='');draw()}
+const pendientes=()=>Object.values(S.preps).filter(p=>!p.subida);
+function drawPreps(){$('preps').innerHTML=Object.values(S.preps).sort((a,b)=>b.id<a.id?-1:1).map(p=>`<div class="card" style="cursor:default"><b>${esc(p.doc)}</b> → ${esc(p.dest)} <span class="${p.subida?'ok':'am'}">${p.subida?'✔ subida':'● pendiente'}</span><div class="mu">${esc(p.quien)} · ${esc(p.fecha)}</div></div>`).join('')||'<p class="mu">Sin registros</p>'}
+function drawPend(){const n=pendientes().length;$('pend').innerHTML=n?`<div class="card am" style="cursor:default">⚠ ${n} transferencia(s) pendientes por subir: ${pendientes().map(p=>esc(p.doc)).join(', ')}</div>`:''}
+
+/* ---- Lectura XML (por nombre de etiqueta) ---- */
+function parseXML(t){const x=new DOMParser().parseFromString(t,'text/xml');
+ const g=(n,k)=>(n.getElementsByTagName(k)[0]?.textContent||'').trim();
+ return [...x.getElementsByTagName('G_NO_CIA')].map(c=>({id:g(c,'NO_DOCU'),ref:g(c,'NUM_DOC_REF'),orig:g(c,'BOD_ORIG'),dest:g(c,'BOD_DEST'),fecha:g(c,'FECHA'),usu:g(c,'USUARIO'),obs:g(c,'OBSERV1'),
+  items:[...c.getElementsByTagName('G_MONTO')].map(m=>({cod:g(m,'NO_ARTI'),desc:g(m,'CF_DESCRI_ARTI_UNIDAD'),q:+g(m,'UNIDADES'),ub:g(m,'UBICACION'),ser:g(m,'IND_REQUIERE_SERIE')=='S',
+   series:[...m.getElementsByTagName('SERIE')].map(s=>s.textContent.trim())}))})).filter(d=>d.id)}
+function loadXML(inp){const f=inp.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{
+ const ds=parseXML(r.result);if(!ds.length)return alert('No se encontraron transferencias en el XML');
+ ds.forEach(d=>{S.docs[d.id]=d;Object.values(S.preps).forEach(p=>{if(!p.subida&&(p.doc==d.id||p.doc==d.ref)){p.subida=true;enq('savePrep',{prep:p})}})});
+ sv();enq('saveDocs',{docs:ds});draw();alert('Cargadas: '+ds.length+' transferencia(s)')};r.readAsText(f);inp.value=''}
+
+/* ---- Búsqueda de documentos ---- */
+function drawDocs(){const q=($('q').value||'').toLowerCase();
+ const l=Object.values(S.docs).filter(d=>!q||[d.id,d.ref,d.dest,d.usu,d.fecha].join(' ').toLowerCase().includes(q)||d.items.some(i=>i.cod.toLowerCase().includes(q)));
+ $('docs').innerHTML=l.map(d=>{const r=S.revs[d.id];return`<div class="card" onclick="openDoc('${d.id}')"><b>${esc(d.id)}</b> ${esc(d.orig)}→${esc(d.dest)} ${r?`<span class="${r.dif?'er':'ok'}">${r.dif?'⚠ con novedades':'✔ revisada'}</span>`:''}<div class="mu">${esc(d.fecha)} · ${esc(d.usu)} · ${d.items.length} artículos</div></div>`}).join('')||'<p class="mu">Carga un XML para empezar</p>'}
+
+/* ---- Revisión ---- */
+function openDoc(id){cur={doc:id,items:{}};$('v_list').style.display='none';$('v_rev').style.display='';drawRev()}
+function closeDoc(){cur=null;$('v_rev').style.display='none';$('v_list').style.display='';draw()}
+function calc(){const d=S.docs[cur.doc];return d.items.map((it,i)=>{const r=cur.items[i];let rec=0,falt=[],extra=[];
+ if(r){if(it.ser){rec=r.s.length;if(it.series.length){falt=it.series.filter(x=>!r.s.includes(x));extra=r.s.filter(x=>!it.series.includes(x))}}else rec=r.q}
+ return{cod:it.cod,desc:it.desc,esp:it.q,rec,falt,extra,rev:!!r,ok:!!r&&rec==it.q&&!falt.length&&!extra.length}})}
+function drawRev(){const d=S.docs[cur.doc],c=calc();
+ $('v_rev').innerHTML=`<button class="g" onclick="closeDoc()">← Volver</button> <h3>${esc(d.id)} · ${esc(d.orig)}→${esc(d.dest)}</h3><div class="mu">${esc(d.obs)}</div>
+ <input id="sc" list="cods" placeholder="Código de artículo (teclear o pistola QR) + Enter" onkeydown="if(event.key=='Enter')goCod(this)"><datalist id="cods">${d.items.map(i=>`<option value="${esc(i.cod)}">${esc(i.desc)}</option>`).join('')}</datalist>
+ <table>${d.items.map((it,i)=>`<tr onclick="openItem(${i})" style="cursor:pointer"><td>${c[i].rev?(c[i].ok?'<span class=ok>✔</span>':'<span class=er>⚠</span>'):'○'}</td><td>${esc(it.cod)}<div class="mu">${esc(it.desc)}${it.ser?' · SERIE':''}</div></td><td>${c[i].rev?c[i].rec+' / ':''}${it.q}</td></tr>`).join('')}</table>
+ <div class="b"><button onclick="finish()">Finalizar revisión</button></div>`;$('sc').focus()}
+function goCod(inp){const v=inp.value.trim().toLowerCase(),d=S.docs[cur.doc];const i=d.items.findIndex((it,k)=>it.cod.toLowerCase()==v&&!cur.items[k]);const j=i>=0?i:d.items.findIndex(it=>it.cod.toLowerCase()==v);
+ if(j<0){alert('⚠ Código '+inp.value+' no está en este documento');inp.value='';return}openItem(j)}
+function openItem(i){const it=S.docs[cur.doc].items[i],r=cur.items[i];
+ if(!it.ser){show(`<h3>${esc(it.cod)}</h3><p>${esc(it.desc)}</p><p>Cantidad del documento: <b>${it.q}</b></p><input id="qq" type="number" min="0" value="${r?r.q:it.q}" onkeydown="if(event.key=='Enter')okQ(${i})"><div class="b"><button class="g" onclick="dg.close()">Cancelar</button><button onclick="okQ(${i})">Confirmar</button></div>`);setTimeout(()=>$('qq').select(),50)}
+ else{sc=r?[...r.s]:[];drawS(i)}}
+function okQ(i){const v=$('qq').value;if(v==='')return;cur.items[i]={q:+v};dg.close();drawRev()}
+function drawS(i){const it=S.docs[cur.doc].items[i];
+ show(`<h3>${esc(it.cod)}</h3><p>${esc(it.desc)}</p><p>Series: <b>${sc.length}</b> / ${it.q}</p><input id="ss" placeholder="Escanear serie + Enter" onkeydown="if(event.key=='Enter')addS(${i})"><div class="ls">${sc.map((s,j)=>`<div>${esc(s)}${it.series.length&&!it.series.includes(s)?' <span class=er>⚠ ajena</span>':''} <a class="er" style="cursor:pointer" onclick="sc.splice(${j},1);drawS(${i})">✕</a></div>`).join('')}</div><div class="b"><button class="g" onclick="dg.close()">Cancelar</button><button onclick="okS(${i})">Confirmar</button></div>`);$('ss').focus()}
+function addS(i){const it=S.docs[cur.doc].items[i],v=$('ss').value.trim();if(!v)return;
+ if(sc.includes(v)){alert('⚠ Serie repetida: '+v);$('ss').value='';return}
+ if(it.series.length&&!it.series.includes(v)&&!confirm('⚠ La serie '+v+' no pertenece a este artículo. ¿Agregar de todos modos?')){$('ss').value='';return}
+ sc.push(v);drawS(i)}
+function okS(i){cur.items[i]={s:[...sc]};dg.close();drawRev()}
+function finish(){const c=calc(),dif=c.filter(x=>!x.ok);
+ show(`<h3>Finalizar revisión</h3>${dif.length?`<p class="er">${dif.length} con diferencias:</p><div class="ls">${dif.map(x=>`<div>${esc(x.cod)}: ${x.rev?x.rec+' de '+x.esp:'no revisado'}${x.falt.length?' · faltan '+x.falt.length+' serie(s)':''}${x.extra.length?' · '+x.extra.length+' ajena(s)':''}</div>`).join('')}</div><input id="fq" placeholder="¿Quién preparó? (obligatorio)"><textarea id="fd" placeholder="Detalle de la diferencia (obligatorio)"></textarea>`:'<p class="ok">✔ Todo completo</p>'}
+ <textarea id="fo" placeholder="Observación (opcional)"></textarea><label class="mu">Foto (opcional)</label><input type="file" id="fp" accept="image/*"><div class="b"><button class="g" onclick="dg.close()">Cancelar</button><button onclick="saveRev()">Guardar</button></div>`)}
+function comp(file){return new Promise(res=>{if(!file)return res(null);const fr=new FileReader();fr.onload=()=>{const im=new Image();im.onload=()=>{const k=Math.min(1,900/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=im.width*k;c.height=im.height*k;c.getContext('2d').drawImage(im,0,0,c.width,c.height);res(c.toDataURL('image/jpeg',.5))};im.src=fr.result};fr.readAsDataURL(file)})}
+async function saveRev(){const c=calc(),dif=c.filter(x=>!x.ok).length,d=S.docs[cur.doc];
+ const quien=dif?$('fq').value.trim():'',det=dif?$('fd').value.trim():'';if(dif&&(!quien||!det))return alert('Indica quién preparó y el detalle');
+ const img=await comp($('fp').files[0]);const n=new Date();
+ const rev={id:d.id,dest:d.dest,usu:d.usu,fecha:n.toLocaleString('es-EC'),dia:ld(n),items:c.map(({cod,desc,esp,rec,falt,extra,rev,ok})=>({cod,desc,esp,rec,falt,extra,rev,ok})),dif,quien,det,obs:$('fo').value.trim(),foto:!!img};
+ S.revs[d.id]=rev;sv();enq('saveRev',{rev});if(img)enq('photo',{doc:d.id,img});dg.close();closeDoc()}
+
+/* ---- Reporte ---- */
+function repRows(){return Object.values(S.revs).filter(r=>r.dia==$('rd').value)}
+function drawRep(){if(!$('rd').value)$('rd').value=ld();const l=repRows(),con=l.filter(r=>r.dif).length,it=l.flatMap(r=>r.items),ok=it.filter(i=>i.ok).length,p=(a,b)=>b?Math.round(a*100/b)+'%':'—';
+ $('rep').innerHTML=`<div class="row" style="margin:10px 0"><div class="card">Revisadas<h2>${l.length}</h2></div><div class="card">Sin novedades<h2 class="ok">${l.length-con}</h2></div><div class="card">Con novedades<h2 class="er">${con}</h2></div><div class="card">% transferencias OK<h2>${p(l.length-con,l.length)}</h2></div><div class="card">% artículos OK<h2>${p(ok,it.length)}</h2></div></div>
+ <table><tr><th>Doc</th><th>Destino</th><th>% art.</th><th>Estado</th></tr>${l.map(r=>`<tr><td>${esc(r.id)}</td><td>${esc(r.dest)}</td><td>${p(r.items.filter(i=>i.ok).length,r.items.length)}</td><td class="${r.dif?'er':'ok'}">${r.dif?'Con novedades':'OK'}</td></tr>`).join('')}</table>`}
+function xls(){const l=repRows();if(!l.length)return alert('Sin datos para esa fecha');
+ const a=l.flatMap(r=>r.items.map(i=>({Documento:r.id,Destino:r.dest,Fecha:r.fecha,Código:i.cod,Descripción:i.desc,Esperado:i.esp,Recibido:i.rec,'Series faltantes':i.falt.join(', '),'Series ajenas':i.extra.join(', '),Estado:i.ok?'OK':'Diferencia',Preparó:r.quien,Detalle:r.det,Observación:r.obs})));
+ const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(a),'Reporte');XLSX.writeFile(wb,'Recepcion_TS_'+$('rd').value+'.xlsx')}
+
+load();pump();
+</script></body></html>
