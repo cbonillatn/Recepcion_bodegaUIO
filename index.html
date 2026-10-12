@@ -31,7 +31,7 @@ dialog{background:var(--pn);color:var(--tx);border:2px solid var(--am);border-ra
 
 <section id="t1"><div id="pend"></div>
 <div id="v_list"><label class="bt" style="display:inline-block">📂 Cargar XML<input type="file" accept=".xml,.XML" hidden onchange="loadXML(this)"></label>
-<input id="q" placeholder="Buscar: documento, destino, usuario, fecha o código de artículo" oninput="drawDocs()"><div id="docs"></div></div>
+<input id="q" placeholder="Buscar: documento, destino, usuario, fecha o código de artículo" oninput="drawDocs()"><div class="row" style="margin:6px 0"><button id="df0" onclick="setDf('pend')">Por revisar</button><button id="df1" class="g" onclick="setDf('hist')">Historial</button></div><div id="docs"></div></div>
 <div id="v_rev" style="display:none"></div></section>
 
 <section id="t2"><div class="row"><input type="date" id="rd" onchange="drawRep()"><button onclick="xls()">⬇ Excel</button></div><div id="rep"></div></section>
@@ -41,14 +41,14 @@ dialog{background:var(--pn);color:var(--tx);border:2px solid var(--am);border-ra
 <nav><button class="on" onclick="ctab(0)">Órdenes de compra</button><button onclick="ctab(1)">Reporte diario</button></nav>
 <main>
 <section id="c0" class="on"><div id="c_list"><label class="bt" style="display:inline-block">📄 Cargar PDF(s) de orden de compra<input type="file" accept=".pdf" multiple hidden onchange="loadPDF(this)"></label>
-<input id="cq" placeholder="Buscar: N° orden, proveedor, solicitante, fecha o artículo" oninput="drawC()"><div id="cdocs"></div></div>
+<input id="cq" placeholder="Buscar: N° orden, proveedor, solicitante, fecha o artículo" oninput="drawC()"><div class="row" style="margin:6px 0"><button id="cf0" onclick="setCf('pend')">Por revisar</button><button id="cf1" class="g" onclick="setCf('hist')">Historial</button></div><div id="cdocs"></div></div>
 <div id="c_rev" style="display:none"></div></section>
 <section id="c1"><div class="row"><input type="date" id="crd" onchange="drawCRep()"><button onclick="cxls()">⬇ Excel</button></div><div id="crep"></div></section>
 </main></div>
 <dialog id="dg"></dialog>
 
 <script>
-const API='https://script.google.com/macros/s/AKfycbwLJuqtcL949ggDTjlPh_hTYE2GVZzoj1R_STWOOqf5pWCnLrnBHdxCYD4Zrj0PsTam-g/exec';
+const API='https://script.google.com/macros/s/AKfycbzjm1f7wOtTn6OSNljFSD3TONz3bd8nE7m5C19gRcfkyRR9-oQpUj2c-wIUQk-Q3vC5YA/exec';
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const ld=(d=new Date())=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
@@ -106,12 +106,15 @@ function loadXML(inp){const f=inp.files[0];if(!f)return;const r=new FileReader()
  sv();enq('saveDocs',{docs:ds});draw();alert('Cargadas: '+ds.length+' transferencia(s)')};r.readAsText(f);inp.value=''}
 
 /* ---- Búsqueda de documentos ---- */
-function drawDocs(){const q=($('q').value||'').toLowerCase();
- const l=Object.values(S.docs).filter(d=>!q||[d.id,d.ref,d.dest,d.usu,d.fecha].join(' ').toLowerCase().includes(q)||d.items.some(i=>i.cod.toLowerCase().includes(q)));
- $('docs').innerHTML=l.map(d=>{const r=S.revs[d.id];return`<div class="card" onclick="openDoc('${d.id}')"><b>${esc(d.id)}</b> ${esc(d.orig)}→${esc(d.dest)} ${r?`<span class="${r.dif?'er':'ok'}">${r.dif?'⚠ con novedades':'✔ revisada'}</span>`:''}<div class="mu">${esc(d.fecha)} · ${esc(d.usu)} · ${d.items.length} artículos</div></div>`}).join('')||'<p class="mu">Carga un XML para empezar</p>'}
+let df='pend';function setDf(m){df=m;drawDocs()}
+function drawDocs(){const q=($('q').value||'').toLowerCase(),all=Object.values(S.docs),np=all.filter(d=>!S.revs[d.id]).length;
+ $('df0').className=df=='pend'?'':'g';$('df1').className=df=='hist'?'':'g';$('df0').textContent='Por revisar ('+np+')';$('df1').textContent='Historial ('+(all.length-np)+')';
+ const l=all.filter(d=>(df=='hist')==!!S.revs[d.id]&&(!q||[d.id,d.ref,d.dest,d.usu,d.fecha].join(' ').toLowerCase().includes(q)||d.items.some(i=>i.cod.toLowerCase().includes(q))));
+ if(df=='hist')l.sort((a,b)=>(S.revs[b.id].dia||'')>(S.revs[a.id].dia||'')?1:-1);
+ $('docs').innerHTML=l.map(d=>{const r=S.revs[d.id];return`<div class="card" onclick="openDoc('${d.id}')"><b>${esc(d.id)}</b> ${esc(d.orig)}→${esc(d.dest)} ${r?`<span class="${r.dif?'er':'ok'}">${r.dif?'⚠ con novedades':'✔ revisada'}</span>`:''}<div class="mu">${esc(d.fecha)} · ${esc(d.usu)} · ${d.items.length} artículos${r?' · revisada '+esc(r.fecha):''}</div></div>`}).join('')||`<p class="mu">${df=='pend'?(all.length?'No hay documentos por revisar 👍':'Carga un XML para empezar'):'Sin documentos revisados'}</p>`}
 
 /* ---- Revisión ---- */
-function openDoc(id){cur={doc:id,items:{}};$('v_list').style.display='none';$('v_rev').style.display='';drawRev()}
+function openDoc(id){if(S.revs[id]&&!confirm('Esta transferencia ya fue revisada. ¿Revisarla de nuevo? Se reemplazará la revisión anterior.'))return;cur={doc:id,items:{}};$('v_list').style.display='none';$('v_rev').style.display='';drawRev()}
 function closeDoc(){cur=null;$('v_rev').style.display='none';$('v_list').style.display='';draw()}
 function calc(){const d=S.docs[cur.doc];return d.items.map((it,i)=>{const r=cur.items[i];let rec=0,falt=[],extra=[];
  if(r){if(it.ser){rec=r.s.length;if(it.series.length){falt=it.series.filter(x=>!r.s.includes(x));extra=r.s.filter(x=>!it.series.includes(x))}}else rec=r.q}
@@ -176,10 +179,13 @@ function parseOC(rows){
 async function loadPDF(inp){let ok=0,bad=[];
  for(const f of inp.files){try{const o=parseOC(await pdfRows(await f.arrayBuffer()));if(!o){bad.push(f.name);continue}S.cdocs[o.id]=o;enq('saveCDocs',{docs:[o]});ok++}catch(e){bad.push(f.name)}}
  sv();inp.value='';drawC();alert('Órdenes cargadas: '+ok+(bad.length?'\nNo se pudo leer: '+bad.join(', '):''))}
-function drawC(){const q=($('cq').value||'').toLowerCase();
- const l=Object.values(S.cdocs).filter(d=>!q||[d.id,d.prov,d.solic,d.fecha,d.entrega,d.tarea].join(' ').toLowerCase().includes(q)||d.items.some(i=>(i.cod+' '+i.desc).toLowerCase().includes(q))).sort((a,b)=>b.fecha<a.fecha?-1:1);
- $('cdocs').innerHTML=l.map(d=>{const r=S.crevs[d.id];return`<div class="card" onclick="openOC('${d.id}')"><b>OC ${esc(d.id)}</b> ${esc(d.prov)} ${r?`<span class="${r.dif?'er':'ok'}">${r.dif?'⚠ con novedades':'✔ revisada'}</span>`:''}<div class="mu">Orden ${esc(d.fecha)} · Entrega ${esc(d.entrega)} · ${esc(d.solic)} · ${d.items.length} artículos</div></div>`}).join('')||'<p class="mu">Carga un PDF para empezar</p>'}
-function openOC(id){cc={oc:id,items:{}};$('c_list').style.display='none';$('c_rev').style.display='';drawOC()}
+let cf='pend';function setCf(m){cf=m;drawC()}
+function drawC(){const q=($('cq').value||'').toLowerCase(),all=Object.values(S.cdocs),np=all.filter(d=>!S.crevs[d.id]).length;
+ $('cf0').className=cf=='pend'?'':'g';$('cf1').className=cf=='hist'?'':'g';$('cf0').textContent='Por revisar ('+np+')';$('cf1').textContent='Historial ('+(all.length-np)+')';
+ const l=all.filter(d=>(cf=='hist')==!!S.crevs[d.id]&&(!q||[d.id,d.prov,d.solic,d.fecha,d.entrega,d.tarea].join(' ').toLowerCase().includes(q)||d.items.some(i=>(i.cod+' '+i.desc).toLowerCase().includes(q))));
+ cf=='hist'?l.sort((a,b)=>(S.crevs[b.id].dia||'')>(S.crevs[a.id].dia||'')?1:-1):l.sort((a,b)=>b.fecha<a.fecha?-1:1);
+ $('cdocs').innerHTML=l.map(d=>{const r=S.crevs[d.id];return`<div class="card" onclick="openOC('${d.id}')"><b>OC ${esc(d.id)}</b> ${esc(d.prov)} ${r?`<span class="${r.dif?'er':'ok'}">${r.dif?'⚠ con novedades':'✔ revisada'}</span>`:''}<div class="mu">Orden ${esc(d.fecha)} · Entrega ${esc(d.entrega)} · ${esc(d.solic)} · ${d.items.length} artículos${r?' · revisada '+esc(r.fecha):''}</div></div>`}).join('')||`<p class="mu">${cf=='pend'?(all.length?'No hay órdenes por revisar 👍':'Carga un PDF para empezar'):'Sin órdenes revisadas'}</p>`}
+function openOC(id){if(S.crevs[id]&&!confirm('Esta orden ya fue revisada. ¿Revisarla de nuevo? Se reemplazará la revisión anterior.'))return;cc={oc:id,items:{}};$('c_list').style.display='none';$('c_rev').style.display='';drawOC()}
 function closeOC(){cc=null;$('c_rev').style.display='none';$('c_list').style.display='';drawC()}
 function calcC(){return S.cdocs[cc.oc].items.map((it,i)=>{const r=cc.items[i];return{cod:it.cod,desc:it.desc,esp:it.q,rec:r?r.q:0,rev:!!r,ok:!!r&&r.q==it.q}})}
 function drawOC(){const d=S.cdocs[cc.oc],c=calcC();
