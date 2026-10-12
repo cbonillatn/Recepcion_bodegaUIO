@@ -1,5 +1,6 @@
 <!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Recepción</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
 :root{--bg:#14120e;--pn:#201d16;--ln:#3a3528;--tx:#e8e2d0;--mu:#8f8872;--am:#f0b429;--ok:#5fb85f;--er:#e05a4a}
@@ -25,7 +26,8 @@ dialog{background:var(--pn);color:var(--tx);border:2px solid var(--am);border-ra
 <main>
 <section id="t0" class="on"><h3>Registrar preparación</h3>
 <div class="row"><input id="p_doc" placeholder="N° documento"><input id="p_dest" placeholder="Bodega destino"><input id="p_quien" placeholder="Quién prepara"></div>
-<button onclick="addPrep()">Guardar</button><h3>Registros</h3><div id="preps"></div></section>
+<button onclick="addPrep()">Guardar</button><div class="row" style="margin-top:14px"><button id="pf0" onclick="setPf('pend')">Pendientes</button><button id="pf1" class="g" onclick="setPf('hist')">Historial (subidas)</button></div>
+<input id="pq" placeholder="Buscar documento, destino o quién prepara" oninput="drawPreps()"><div id="preps"></div></section>
 
 <section id="t1"><div id="pend"></div>
 <div id="v_list"><label class="bt" style="display:inline-block">📂 Cargar XML<input type="file" accept=".xml,.XML" hidden onchange="loadXML(this)"></label>
@@ -35,17 +37,25 @@ dialog{background:var(--pn);color:var(--tx);border:2px solid var(--am);border-ra
 <section id="t2"><div class="row"><input type="date" id="rd" onchange="drawRep()"><button onclick="xls()">⬇ Excel</button></div><div id="rep"></div></section>
 </main></div>
 
-<div id="cp" style="display:none"><main><h3 class="am">Recepción de Compras</h3><p class="mu">Pendiente: falta el archivo de órdenes de compra para definir los campos. Usará el mismo backend con pestañas propias (Docs_Compras / Revs_Compras).</p></main></div>
+<div id="cp" style="display:none">
+<nav><button class="on" onclick="ctab(0)">Órdenes de compra</button><button onclick="ctab(1)">Reporte diario</button></nav>
+<main>
+<section id="c0" class="on"><div id="c_list"><label class="bt" style="display:inline-block">📄 Cargar PDF(s) de orden de compra<input type="file" accept=".pdf" multiple hidden onchange="loadPDF(this)"></label>
+<input id="cq" placeholder="Buscar: N° orden, proveedor, solicitante, fecha o artículo" oninput="drawC()"><div id="cdocs"></div></div>
+<div id="c_rev" style="display:none"></div></section>
+<section id="c1"><div class="row"><input type="date" id="crd" onchange="drawCRep()"><button onclick="cxls()">⬇ Excel</button></div><div id="crep"></div></section>
+</main></div>
 <dialog id="dg"></dialog>
 
 <script>
-const API='https://script.google.com/macros/s/AKfycbxbspYGIsR_utp6oBwgLWB_6ue4AGQZYNDG_0nrHT2bLBXpk-EHLD0NHhCb7pzS4uKWzA/exec';
+const API='https://script.google.com/macros/s/AKfycbwLJuqtcL949ggDTjlPh_hTYE2GVZzoj1R_STWOOqf5pWCnLrnBHdxCYD4Zrj0PsTam-g/exec';
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const ld=(d=new Date())=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 const show=h=>{dg.innerHTML=h;if(!dg.open)dg.showModal()};
-let S={docs:{},revs:{},preps:{}},cur=null,sc=[];
+let S={docs:{},revs:{},preps:{},cdocs:{},crevs:{}},cur=null,cc=null,sc=[];
 try{S=JSON.parse(localStorage.S)}catch(e){}
+const fixS=()=>{S.cdocs=S.cdocs||{};S.crevs=S.crevs||{}};fixS();
 const sv=()=>{try{localStorage.S=JSON.stringify(S)}catch(e){}};
 
 function mod(m){['ts','cp'].forEach(x=>{$(x).style.display=x==m?'':'none';$('m_'+x).className=x==m?'on':'g'})}
@@ -64,15 +74,24 @@ async function pump(){
   Q.shift();try{localStorage.Q=JSON.stringify(Q)}catch(e){}wait=0;err='';busy=false;pump()}
  catch(e){clearTimeout(t);err=e.name=='AbortError'?'tiempo agotado':e.message;wait=Math.min(wait+1500,6000);busy=false;st();setTimeout(pump,wait)}
 }
-async function load(){draw();try{const r=await fetch(API);const x=await r.json();if(x.docs){S=x;sv()}}catch(e){}draw()}
-function draw(){drawPreps();drawDocs();drawPend();drawRep()}
+async function load(){draw();try{const r=await fetch(API);const x=await r.json();if(x.docs){S=x;fixS();sv()}}catch(e){}draw()}
+function draw(){drawPreps();drawDocs();drawPend();drawRep();drawC()}
 
 /* ---- Preparación ---- */
 function addPrep(){const doc=$('p_doc').value.trim(),dest=$('p_dest').value.trim(),quien=$('p_quien').value.trim();if(!doc||!quien)return alert('Documento y quién prepara son obligatorios');
  const p={id:'P'+Date.now(),doc,dest,quien,fecha:new Date().toLocaleString('es-EC'),subida:false};S.preps[p.id]=p;sv();enq('savePrep',{prep:p});
  ['p_doc','p_dest','p_quien'].forEach(i=>$(i).value='');draw()}
 const pendientes=()=>Object.values(S.preps).filter(p=>!p.subida);
-function drawPreps(){$('preps').innerHTML=Object.values(S.preps).sort((a,b)=>b.id<a.id?-1:1).map(p=>`<div class="card" style="cursor:default"><b>${esc(p.doc)}</b> → ${esc(p.dest)} <span class="${p.subida?'ok':'am'}">${p.subida?'✔ subida':'● pendiente'}</span><div class="mu">${esc(p.quien)} · ${esc(p.fecha)}</div></div>`).join('')||'<p class="mu">Sin registros</p>'}
+let pf='pend';
+function setPf(m){pf=m;drawPreps()}
+function drawPreps(){
+ const all=Object.values(S.preps),np=all.filter(p=>!p.subida).length,ns=all.length-np,q=($('pq').value||'').toLowerCase();
+ $('pf0').className=pf=='pend'?'':'g';$('pf1').className=pf=='hist'?'':'g';
+ $('pf0').textContent='Pendientes ('+np+')';$('pf1').textContent='Historial ('+ns+')';
+ let l=all.filter(p=>(pf=='hist')==!!p.subida&&(!q||[p.doc,p.dest,p.quien].join(' ').toLowerCase().includes(q))).sort((a,b)=>b.id<a.id?-1:1);
+ const tot=l.length;if(pf=='hist'&&!q)l=l.slice(0,50);
+ $('preps').innerHTML=l.map(p=>`<div class="card" style="cursor:default"><b>${esc(p.doc)}</b> → ${esc(p.dest)} <span class="${p.subida?'ok':'am'}">${p.subida?'✔ subida':'● pendiente'}</span><div class="mu">${esc(p.quien)} · ${esc(p.fecha)}</div></div>`).join('')||`<p class="mu">${pf=='pend'?'No hay pendientes por subir 👍':'Sin registros'}</p>`;
+ if(tot>l.length)$('preps').innerHTML+=`<p class="mu">Mostrando los 50 más recientes de ${tot}. Usa el buscador para encontrar otros.</p>`}
 function drawPend(){const n=pendientes().length;$('pend').innerHTML=n?`<div class="card am" style="cursor:default">⚠ ${n} transferencia(s) pendientes por subir: ${pendientes().map(p=>esc(p.doc)).join(', ')}</div>`:''}
 
 /* ---- Lectura XML (por nombre de etiqueta) ---- */
@@ -133,6 +152,62 @@ function drawRep(){if(!$('rd').value)$('rd').value=ld();const l=repRows(),con=l.
 function xls(){const l=repRows();if(!l.length)return alert('Sin datos para esa fecha');
  const a=l.flatMap(r=>r.items.map(i=>({Documento:r.id,Destino:r.dest,Fecha:r.fecha,Código:i.cod,Descripción:i.desc,Esperado:i.esp,Recibido:i.rec,'Series faltantes':i.falt.join(', '),'Series ajenas':i.extra.join(', '),Estado:i.ok?'OK':'Diferencia',Preparó:r.quien,Detalle:r.det,Observación:r.obs})));
  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(a),'Reporte');XLSX.writeFile(wb,'Recepcion_TS_'+$('rd').value+'.xlsx')}
+
+/* ---- Recepción de Compras (lectura de PDF) ---- */
+pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+function ctab(n){document.querySelectorAll('#cp nav button').forEach((b,i)=>b.className=i==n?'on':'');document.querySelectorAll('#cp section').forEach((s,i)=>s.className=i==n?'on':'');if(n==1)drawCRep()}
+//PARSE-START
+const num=s=>{s=String(s).replace('$','').trim();s=/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(s)?s.replace(/\./g,'').replace(',','.'):s.replace(',','.');return +s}
+async function pdfRows(buf){const p=await pdfjsLib.getDocument({data:buf}).promise,out=[];
+ for(let n=1;n<=p.numPages;n++){const c=await(await p.getPage(n)).getTextContent(),rows=[];
+  c.items.forEach(i=>{if(!i.str.trim())return;const y=Math.round(i.transform[5]/3);let r=rows.find(r=>Math.abs(r.y-y)<=1);if(!r)rows.push(r={y,t:[]});r.t.push([i.transform[4],i.str.trim()])});
+  rows.sort((a,b)=>b.y-a.y).forEach(r=>out.push(r.t.sort((a,b)=>a[0]-b[0]).map(t=>t[1])))}
+ return out}
+function parseOC(rows){
+ const val=l=>{for(const r of rows){const i=r.indexOf(l);if(i>=0&&r[i+1])return r[i+1]}return''};
+ let id='',fo='',fe='',tarea='';
+ rows.forEach(r=>{r.forEach(c=>{let m=c.match(/^No\s*(\d+)$/);if(m&&!id)id=m[1];m=c.match(/TAREA\s*#\s*(\d+)/);if(m&&!tarea)tarea=m[1]});
+  if(r.length==2&&/^\d{4}-\d\d-\d\d$/.test(r[0])&&/^\d{4}-\d\d-\d\d$/.test(r[1])){fo=r[0];fe=r[1]}});
+ const items=rows.filter(r=>r.length>=8&&/^\d+$/.test(r[0])&&/^\d[\d-]+$/.test(r[1])).map(r=>{const n=r.length;
+  return{n:+r[0],cod:r[1],desc:r.slice(2,n-6).join(' '),mod:r[n-6],q:num(r[n-5]),costo:num(r[n-4])}});
+ if(!id||!items.length)return null;
+ return{id,fecha:fo,entrega:fe,prov:val('NOMBRE:'),ruc:val('RUC:'),solic:val('SOLICITANTE'),depto:val('DEPARTAMENTO'),usu:val('USUARIO'),tiempo:val('TIEMPO'),tarea,total:num(val('TOTAL')||0),items}}
+//PARSE-END
+async function loadPDF(inp){let ok=0,bad=[];
+ for(const f of inp.files){try{const o=parseOC(await pdfRows(await f.arrayBuffer()));if(!o){bad.push(f.name);continue}S.cdocs[o.id]=o;enq('saveCDocs',{docs:[o]});ok++}catch(e){bad.push(f.name)}}
+ sv();inp.value='';drawC();alert('Órdenes cargadas: '+ok+(bad.length?'\nNo se pudo leer: '+bad.join(', '):''))}
+function drawC(){const q=($('cq').value||'').toLowerCase();
+ const l=Object.values(S.cdocs).filter(d=>!q||[d.id,d.prov,d.solic,d.fecha,d.entrega,d.tarea].join(' ').toLowerCase().includes(q)||d.items.some(i=>(i.cod+' '+i.desc).toLowerCase().includes(q))).sort((a,b)=>b.fecha<a.fecha?-1:1);
+ $('cdocs').innerHTML=l.map(d=>{const r=S.crevs[d.id];return`<div class="card" onclick="openOC('${d.id}')"><b>OC ${esc(d.id)}</b> ${esc(d.prov)} ${r?`<span class="${r.dif?'er':'ok'}">${r.dif?'⚠ con novedades':'✔ revisada'}</span>`:''}<div class="mu">Orden ${esc(d.fecha)} · Entrega ${esc(d.entrega)} · ${esc(d.solic)} · ${d.items.length} artículos</div></div>`}).join('')||'<p class="mu">Carga un PDF para empezar</p>'}
+function openOC(id){cc={oc:id,items:{}};$('c_list').style.display='none';$('c_rev').style.display='';drawOC()}
+function closeOC(){cc=null;$('c_rev').style.display='none';$('c_list').style.display='';drawC()}
+function calcC(){return S.cdocs[cc.oc].items.map((it,i)=>{const r=cc.items[i];return{cod:it.cod,desc:it.desc,esp:it.q,rec:r?r.q:0,rev:!!r,ok:!!r&&r.q==it.q}})}
+function drawOC(){const d=S.cdocs[cc.oc],c=calcC();
+ $('c_rev').innerHTML=`<button class="g" onclick="closeOC()">← Volver</button><h3>OC ${esc(d.id)} · ${esc(d.prov)}</h3><div class="mu">Solicita: ${esc(d.solic)} (${esc(d.depto)}) · Entrega ${esc(d.entrega)} · Total $${d.total}</div>
+ <input id="csc" list="ccods" placeholder="Código de artículo (teclear o pistola) + Enter" onkeydown="if(event.key=='Enter')cGo(this)"><datalist id="ccods">${d.items.map(i=>`<option value="${esc(i.cod)}">${esc(i.desc)}</option>`).join('')}</datalist>
+ <table>${d.items.map((it,i)=>`<tr onclick="openCI(${i})" style="cursor:pointer"><td>${c[i].rev?(c[i].ok?'<span class=ok>✔</span>':'<span class=er>⚠</span>'):'○'}</td><td>${esc(it.cod)}<div class="mu">${esc(it.desc)}</div></td><td>${c[i].rev?c[i].rec+' / ':''}${it.q}</td></tr>`).join('')}</table>
+ <div class="b"><button onclick="cFinish()">Finalizar revisión</button></div>`;$('csc').focus()}
+function cGo(inp){const v=inp.value.trim().toLowerCase(),it=S.cdocs[cc.oc].items;const i=it.findIndex((x,k)=>x.cod.toLowerCase()==v&&!cc.items[k]),j=i>=0?i:it.findIndex(x=>x.cod.toLowerCase()==v);
+ if(j<0){alert('⚠ Código '+inp.value+' no está en esta orden');inp.value='';return}openCI(j)}
+function openCI(i){const it=S.cdocs[cc.oc].items[i],r=cc.items[i];
+ show(`<h3>${esc(it.cod)}</h3><p>${esc(it.desc)}</p><p>Cantidad ordenada: <b>${it.q}</b></p><input id="cqq" type="number" min="0" step="any" value="${r?r.q:it.q}" onkeydown="if(event.key=='Enter')okCQ(${i})"><div class="b"><button class="g" onclick="dg.close()">Cancelar</button><button onclick="okCQ(${i})">Confirmar</button></div>`);setTimeout(()=>$('cqq').select(),50)}
+function okCQ(i){const v=$('cqq').value;if(v==='')return;cc.items[i]={q:+v};dg.close();drawOC()}
+function cFinish(){const dif=calcC().filter(x=>!x.ok);
+ show(`<h3>Finalizar revisión</h3>${dif.length?`<p class="er">${dif.length} con diferencias:</p><div class="ls">${calcC().filter(x=>!x.ok).map(x=>`<div>${esc(x.cod)}: ${x.rev?x.rec+' de '+x.esp:'no revisado'}</div>`).join('')}</div><textarea id="cfd" placeholder="Detalle de la diferencia (obligatorio)"></textarea>`:'<p class="ok">✔ Todo completo</p>'}
+ <input id="cff" placeholder="N° de factura / guía (opcional)"><label><input type="checkbox" id="cfc" style="width:auto"> La factura detalla el N° de orden de compra</label>
+ <textarea id="cfo" placeholder="Observación (opcional)"></textarea><label class="mu">Foto (opcional)</label><input type="file" id="cfp" accept="image/*"><div class="b"><button class="g" onclick="dg.close()">Cancelar</button><button onclick="saveCRev()">Guardar</button></div>`)}
+async function saveCRev(){const c=calcC(),dif=c.filter(x=>!x.ok).length,d=S.cdocs[cc.oc],det=dif?$('cfd').value.trim():'';
+ if(dif&&!det)return alert('Indica el detalle de la diferencia');
+ const img=await comp($('cfp').files[0]),n=new Date();
+ const rev={id:d.id,prov:d.prov,fecha:n.toLocaleString('es-EC'),dia:ld(n),items:c,dif,det,obs:$('cfo').value.trim(),fact:$('cff').value.trim(),factOC:$('cfc').checked,foto:!!img};
+ S.crevs[d.id]=rev;sv();enq('saveCRev',{rev});if(img)enq('photo',{doc:'OC_'+d.id,img});dg.close();closeOC()}
+const cRows=()=>Object.values(S.crevs).filter(r=>r.dia==$('crd').value);
+function drawCRep(){if(!$('crd').value)$('crd').value=ld();const l=cRows(),con=l.filter(r=>r.dif).length,it=l.flatMap(r=>r.items),ok=it.filter(i=>i.ok).length,p=(a,b)=>b?Math.round(a*100/b)+'%':'—';
+ $('crep').innerHTML=`<div class="row" style="margin:10px 0"><div class="card">Revisadas<h2>${l.length}</h2></div><div class="card">Sin novedades<h2 class="ok">${l.length-con}</h2></div><div class="card">Con novedades<h2 class="er">${con}</h2></div><div class="card">% órdenes OK<h2>${p(l.length-con,l.length)}</h2></div><div class="card">% artículos OK<h2>${p(ok,it.length)}</h2></div></div>
+ <table><tr><th>OC</th><th>Proveedor</th><th>% art.</th><th>Estado</th></tr>${l.map(r=>`<tr><td>${esc(r.id)}</td><td>${esc(r.prov)}</td><td>${p(r.items.filter(i=>i.ok).length,r.items.length)}</td><td class="${r.dif?'er':'ok'}">${r.dif?'Con novedades':'OK'}</td></tr>`).join('')}</table>`}
+function cxls(){const l=cRows();if(!l.length)return alert('Sin datos para esa fecha');
+ const a=l.flatMap(r=>r.items.map(i=>({'Orden de compra':r.id,Proveedor:r.prov,Fecha:r.fecha,Código:i.cod,Descripción:i.desc,Ordenado:i.esp,Recibido:i.rec,Estado:i.ok?'OK':'Diferencia',Factura:r.fact,'Factura con N° OC':r.factOC?'Sí':'No',Detalle:r.det,Observación:r.obs})));
+ const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(a),'Compras');XLSX.writeFile(wb,'Recepcion_Compras_'+$('crd').value+'.xlsx')}
 
 load();pump();
 </script></body></html>
